@@ -1,0 +1,95 @@
+name: Passport Status Tracker
+
+on:
+  schedule:
+    - cron: "0 * * * *"   # runs every hour (UTC)
+  workflow_dispatch:
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch passport status
+        id: fetch
+        env:
+          FILE_NO: ${{ secrets.PASSPORT_FILE_NO }}
+          DOB: ${{ secrets.PASSPORT_DOB }}
+        run: |
+          # Mask secrets explicitly
+          echo "::add-mask::$FILE_NO"
+          echo "::add-mask::$DOB"
+
+          RESPONSE=$(curl -s 'https://api1.passportindia.gov.in/v1/online/trackStatusForFileNo' \
+            -H 'Accept: application/json' \
+            -H 'Content-Type: application/json' \
+            -H 'Origin: https://www.passportindia.gov.in' \
+            -H 'Referer: https://www.passportindia.gov.in/' \
+            --data-raw "{
+              \"requestResponseMap\": {
+                \"fileNo\": \"${FILE_NO}\",
+                \"applDob\": \"${DOB}\",
+                \"optStatus\": \"Application_Status\"
+              }
+            }")
+
+          # Extract status message (DO NOT LOG)
+          STATUS=$(echo "$RESPONSE" | jq -r '.requestResponseMap.statusMessage // empty')
+
+          if [ -z "$STATUS" ]; then
+            exit 1
+          fi
+
+          # Mask status text
+          echo "::add-mask::$STATUS"
+
+          # Export status ONLY for Telegram
+          echo "status=$STATUS" >> $GITHUB_OUTPUT
+
+          # Hash status for comparison (no plaintext stored)
+          echo -n "$STATUS" | sha256sum | awk '{print $1}' > new_status.txt
+
+      - name: Compare status (hashed)
+        id: compare
+        run: |
+          if [ -f status.txt ]; then
+            OLD=$(cat status.txt)
+          else
+            OLD=""
+          fi
+
+          NEW=$(cat new_status.txt)
+
+          if [ "$OLD" != "$NEW" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Telegram notify
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          BOT: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          echo "::add-mask::$BOT"
+          echo "::add-mask::$CHAT"
+
+          curl -s -X POST "https://api.telegram.org/bot${BOT}/sendMessage" \
+            -d chat_id="${CHAT}" \
+            -d text="📘 Passport Update Alert
+
+Status has changed.
+
+New Status:
+${{ steps.fetch.outputs.status }}
+
+Please check the official Passport Seva portal for more details."
+
+      - name: Update local cache
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          mv new_status.txt status.txt
