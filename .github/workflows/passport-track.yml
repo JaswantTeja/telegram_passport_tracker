@@ -2,7 +2,7 @@ name: Passport Status Tracker
 
 on:
   schedule:
-    - cron: "0 * * * *"   # runs every hour (UTC)
+    - cron: "0 * * * *"   # every hour (UTC)
   workflow_dispatch:
 
 jobs:
@@ -19,7 +19,6 @@ jobs:
           FILE_NO: ${{ secrets.PASSPORT_FILE_NO }}
           DOB: ${{ secrets.PASSPORT_DOB }}
         run: |
-          # Mask secrets explicitly
           echo "::add-mask::$FILE_NO"
           echo "::add-mask::$DOB"
 
@@ -36,20 +35,15 @@ jobs:
               }
             }")
 
-          # Extract status message (DO NOT LOG)
           STATUS=$(echo "$RESPONSE" | jq -r '.requestResponseMap.statusMessage // empty')
 
           if [ -z "$STATUS" ]; then
             exit 1
           fi
 
-          # Mask status text
           echo "::add-mask::$STATUS"
-
-          # Export status ONLY for Telegram
           echo "status=$STATUS" >> $GITHUB_OUTPUT
 
-          # Hash status for comparison (no plaintext stored)
           echo -n "$STATUS" | sha256sum | awk '{print $1}' > new_status.txt
 
       - name: Compare status (hashed)
@@ -74,20 +68,27 @@ jobs:
         env:
           BOT: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATUS: ${{ steps.fetch.outputs.status }}
         run: |
           echo "::add-mask::$BOT"
           echo "::add-mask::$CHAT"
+          echo "::add-mask::$STATUS"
 
-          curl -s -X POST "https://api.telegram.org/bot${BOT}/sendMessage" \
-            -d chat_id="${CHAT}" \
-            -d text="📘 Passport Update Alert
+          MESSAGE=$(cat <<EOF
+📘 Passport Update Alert
 
 Status has changed.
 
 New Status:
-${{ steps.fetch.outputs.status }}
+$STATUS
 
-Please check the official Passport Seva portal for more details."
+Please check the official Passport Seva portal for more details.
+EOF
+          )
+
+          curl -s -X POST "https://api.telegram.org/bot${BOT}/sendMessage" \
+            -d chat_id="${CHAT}" \
+            -d text="$MESSAGE"
 
       - name: Update local cache
         if: steps.compare.outputs.changed == 'true'
