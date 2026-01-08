@@ -74,17 +74,7 @@ jobs:
           echo "::add-mask::$CHAT"
           echo "::add-mask::$STATUS"
 
-          MESSAGE=$(cat <<EOF
-📘 Passport Update Alert
-
-Status has changed.
-
-New Status:
-$STATUS
-
-Please check the official Passport Seva portal for more details.
-EOF
-          )
+          MESSAGE="status changed"
 
           curl -s -X POST "https://api.telegram.org/bot${BOT}/sendMessage" \
             -d chat_id="${CHAT}" \
